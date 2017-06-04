@@ -1,0 +1,225 @@
+var Parser = require "./Parser";
+var util = require "./util";
+
+var basic = new Parser();
+
+var unit = basic.unit;
+var concept = basic.concept;
+
+basic.addConcept("string", {
+  test: function(interface, params){
+    if (typeof params === "string"){
+      var i = 0;
+      var c;
+      for (i = 0; i < params.length; ++i){
+        c = interface.eat(unit.char());
+        if (!c || c !== params[i]){
+          return;
+        };
+      };
+      return params;
+    };
+  }
+});
+
+basic.addConcept("regexChar", {
+  test: function(interface, params){
+    if (typeof params === "object"){
+      var c = interface.eat(unit.char());
+      if (c){
+        if (params.test(c)){
+          return c;
+        };
+      };
+    };
+  }
+});
+
+
+
+basic.addConcept("alternative", {
+  test: function(interface, params){
+    var l = params.length || 0;
+    var i = 0;
+    if (typeof params === "string"){
+      var eaten = interface.eat(unit.char());
+      if (!eaten){
+        return;
+      };
+      if (params.indexOf(eaten) === -1){
+        return;
+      };
+      return eaten;
+    }else{
+      for (i = 0; i < l; ++i){
+        var eaten = interface.eat(params[i]);
+        if (eaten){
+          return eaten;
+        };
+      };
+    };
+  }
+});
+
+basic.addConcept("label", {
+  test: function(interface, params){
+    var eaten = interface.eat(params);
+    if (eaten){
+      if (typeof eaten === "string"){
+        return {
+          source: eaten
+        };
+      };
+      return eaten;
+    };
+  }
+});
+
+
+basic.addUnit("eol", basic.concept.alternative([
+  concept.string("\n"),
+  concept.string("\r\n"),
+  concept.string("\r"),
+  concept.string("\u2028"),
+  concept.string("\u2029")
+  ])
+);
+
+
+basic.addConcept("sequence", {
+  test: function(interface, params){
+    var l = params.length || 0;
+    if (!l){
+      return;
+    };
+    var ret = {
+      sequence: []
+    };
+    var i = 0;
+    var eaten;
+    for (i = 0; i < l; ++i){
+      if (params[i].optional){
+        eaten = interface.eat(params[i].content);
+        if (!eaten){
+          continue;
+        };
+      }else{
+        eaten = interface.eat(params[i]);
+        if (!eaten){
+          return;
+        };
+      };
+      ret.sequence.push(eaten);
+    };
+    if (ret.sequence.length){
+      return ret;
+    };
+  }
+});
+
+//
+// {
+//   start: <optinal start token>,
+//   never: <optional - list can not contain this - tested before of>,
+//   of: <what the list is of>,
+//   end: <optinal end token>,
+//   min: <optional int - min length - default 1 must be >= 1 >,
+//   max: <optional int - max length>,
+// }
+//
+// {
+//   start: <res of start if provided>,
+//   list: [<res of of>],
+//   end: <res of end if provided>,
+// }
+//
+basic.addConcept("list", {
+  test: function(interface, params){
+    //console.log("testing list");
+    //console.log(params);
+    
+    var debug = false;
+    
+    var res = {
+    };
+    
+    var hasStartOrEnd = false;
+    
+    if (params.start){
+      res.start = interface.eat(params.start);
+      if (!res.start){
+        if (debug){
+          console.log("failed start");
+        };
+        return;
+      };
+      hasStartOrEnd = true;
+    };
+    if (params.end){
+      hasStartOrEnd = true;
+    };
+    var min = params.min || (hasStartOrEnd ? 0 : 1);
+    if (min < 0){
+      throw util.parseException("min can not be < 0", params);
+    };
+    if (min < 1 && !hasStartOrEnd){
+      throw util.parseException("min can not be < 1 without start or end", params);
+    };
+    var max = 0;
+    if (params.max >= 1){
+      max = params.max;
+    };
+    
+    res.list = [];
+    var cont = true;
+    while(cont){
+      if (params.end){
+        res.end = interface.eat(params.end);
+        if (res.end){
+          cont = false;
+          break;
+        };
+      };
+      if (params.never){
+        var never = interface.eat(params.never);
+        if (never){
+          if (debug){
+            console.log("failed never");
+          };
+          return;
+        };
+      };
+      var eaten = interface.eat(params.of);
+      if (eaten){
+        res.list.push(eaten);
+        if (max && res.list.length + 1 > max){
+          cont = false;
+        };
+      }else{
+        cont = false;
+      };
+    };
+    
+    if (res.list.length < min){
+      if (debug){
+        console.log("failed length");
+      };
+      return;
+    };
+    
+    if (params.end && !res.end){
+      res.end = interface.eat(params.end);
+      if (!res.end){
+        if (debug){
+          console.log("failed end");
+        };
+        return;
+      };
+    };
+    
+    return res;
+  }
+});
+
+
+return basic;

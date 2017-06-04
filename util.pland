@@ -1,0 +1,19 @@
+function parseException(msg, content){
+  return {
+    type: "parse exception",
+    msg: msg,
+    content: content
+  };
+};
+
+function optional(param){
+  return {
+    optional: true,
+    content: param
+  };
+};
+
+return {
+  parseException: parseException,
+  optional: optional
+};

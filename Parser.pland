@@ -1,0 +1,423 @@
+var util = require "./util";
+var parseException = util.parseException;
+
+var leftException = {};
+
+function makeRun(parser){
+  var run = {
+    next: 0,
+    tree: {
+      left: undefined
+    },
+    interface: {
+      /*
+        option:
+          left:
+            true   // eat left if available
+            false  // throw error if something wants to eat left
+            object // a left object that must be eaten first
+            undefined // dont care about eating preferences
+      */
+      eat: function(food, option){
+        option = option || {};
+        var ret;
+        var t = run.tree;
+        if (option.left === undefined){
+          if (t.left){
+            console.log("trying to eat something but there is left");
+            throw leftException;
+          };
+        };
+        if (option.left === true){
+          if (t.left === false){
+            console.log("trying to eat left but nope");
+            throw leftException;
+          };
+          if (t.left){
+            ret = t.left;
+            t.left = undefined;
+            return ret;
+          };
+        };
+        var oldLeft = t.left;
+        if (option.left === false || option.left){
+          t.left = option.left;
+        };
+        try{
+          ret = parser.apply(food, run);
+        }catch(err){
+          t.left = oldLeft;
+          if (err === leftException){
+            return;
+          };
+          throw err;
+        };
+        t.left = oldLeft;
+        return ret;
+      },
+      barfer: function(){
+        // remembering next pointer
+        var next = run.next;
+        var tree = run.tree;
+        var left = run.tree.left;
+        return function(){
+          // setting next pointer back
+          run.next = next;
+          run.tree = tree;
+          run.tree.left = left;
+        };
+      },
+      pos: function(){
+        return run.next;
+      },
+      substr: function(pos, len){
+        return parser.code.substr(pos, len);
+      }
+    }
+  };
+  return run;
+};
+
+
+var unitChar = function(param){
+  return {
+    type: "unit",
+    name: "char",
+    param: {}
+  };
+};
+var unitDataChar = {
+  elemental: true,
+  name: "char"
+};
+var unitEof = function(param){
+  return {
+    type: "unit",
+    name: "eof",
+    param: {}
+  };
+};
+var unitDataEof = {
+  elemental: true,
+  name: "eof"
+};
+
+var conceptSource = function(param){
+  return {
+    type: "concept",
+    name: "source",
+    param: param
+  };
+};
+
+var conceptDataSource = {
+  test: function(interface, params){
+    var startPos = interface.pos();
+    var eaten = interface.eat(params);
+    if (eaten){
+      return interface.substr(startPos, interface.pos() - startPos);
+    };
+  }
+};
+
+
+var addSomething = function(obj, type, name, param){
+  //if (typeof concept.test !== "function"){
+  //  throw parseException("missing test function in concept", concept);
+  //};
+  var typeObj = obj[type];
+  var typeDataObj = obj[type + "Data"];
+  if (!typeObj || !typeDataObj){
+    throw parseException("addSomething called with " + type, obj);
+  };
+  if (!typeObj[name]){
+    typeObj[name] = function(callParam){
+      return {
+        type: type,
+        name: name,
+        param: callParam
+      };
+    };
+  };
+  if (!param){
+    // pre definition
+    return;
+  };
+  if (typeDataObj[name]){
+    throw parseException(type + " " + name + " allready exists", param);
+  };
+  typeDataObj[name] = param;
+};
+
+var extendSomething = function(obj, other, type){
+  var i;
+  for (i in other[type]){
+    if (obj[type][i] == other[type][i]){
+      continue;
+    };
+    if (obj[type][i]){
+      throw parseException(type + "already exists", i);
+    };
+    obj[type][i] = other[type][i];
+  };
+  for (i in other[type + "Data"]){
+    if (obj[type + "Data"][i] == other[type + "Data"][i]){
+      continue;
+    };
+    if (obj[type + "Data"][i]){
+      throw parseException(type + " already exists", i);
+    };
+    obj[type + "Data"][i] = other[type + "Data"][i];
+  };
+};
+
+
+class Parser{
+  constructor(){
+    this.unit = {};
+    this.unitData = {};
+    this.concept = {};
+    this.conceptData = {};
+    this.tree = {};
+    this.treeData = {};
+    
+    this.unit.char = unitChar;
+    this.unitData.char = unitDataChar;
+    this.unit.eof = unitEof;
+    this.unitData.eof = unitDataEof;
+    
+    this.concept.source = conceptSource;
+    this.conceptData.source = conceptDataSource;
+    
+  },
+  
+  parse(code, program){
+    this.code = code;
+    this.list = [];
+    var idx = 0;
+    var c;
+    for (idx = 0; idx < code.length; ++idx){
+      this.list.push({
+        char: {
+          valid: true,
+          next: idx + 1,
+          content: code[idx]
+        }
+      });
+    };
+    this.list.push({
+      eof: {
+        valid: true,
+        next: idx + 1,
+        content: {
+          unit: "eof"
+        }
+      }
+    });
+    
+    return this.apply(program);
+  },
+  
+  apply(data, run){
+    var parser = this;
+    if (!run){
+      run = makeRun(this);
+    };
+    
+    var barf = run.interface.barfer();
+    var startPos = run.interface.pos();
+    var ret;
+    
+    if (data.type === "concept"){
+      var concept = this.conceptData[data.name];
+      if (!concept){
+        throw parseException("missing concept", data);
+      };
+      ret = concept.test(run.interface, data.param);
+      if (!ret){
+        barf();
+        return;
+      };
+      if (typeof ret === "object" && !ret.concept){
+        ret.concept = data.name;
+        ret.startPos = startPos;
+        ret.endPos = run.interface.pos();
+      };
+      return ret;
+    };
+    
+    if (data.type === "tree"){
+      var tree = this.treeData[data.name];
+      if (!tree || !tree.nodes){
+        throw parseException("missing tree", data);
+      };
+      var eaten;
+      var n = 0;
+      var node;
+      var minBp = 0;
+      if (data.param && data.param.minBp){
+        minBp = data.param.minBp;
+      };
+      var t = {
+      };
+      run.tree = t;
+      var treebarf = run.interface.barfer();
+      
+      //console.log("nodes 0")
+      for (n = 0; n < tree.nodes.length; ++n){
+        node = tree.nodes[n];
+        
+        treebarf();
+        
+        //console.log(node);
+        eaten = run.interface.eat(node, {
+          left: false
+        });
+        if (eaten){
+          if (eaten.bp >= minBp){
+            break;
+          }else{
+            treebarf();
+            eaten = undefined;
+          };
+        };
+      };
+      var newEaten = eaten;
+      while (newEaten){
+        eaten = newEaten;
+        var left = newEaten;
+        run.tree = t;
+        treebarf = run.interface.barfer();
+        
+        //console.log("nodes 1")
+        for (n = 0; n < tree.nodes.length; ++n){
+          node = tree.nodes[n];
+          treebarf();          
+
+          console.log("setting left to");
+          console.log(left);
+          newEaten = run.interface.eat(node, {
+            left: left
+          });
+
+          if (newEaten){
+            if (newEaten.bp <= eaten.bp && newEaten.bp >= minBp){
+              //console.log("success");
+              break;
+            }else{
+              //console.log("meh");
+              treebarf();
+              newEaten = undefined;
+            };
+          };
+        };
+      };
+      
+      console.log("eaten:");
+      console.log(eaten);
+      
+      if (!eaten){
+        barf();
+        return;
+      };
+      
+      if (typeof eaten === "object"){
+        eaten.tree = data.name;
+        eaten.startPos = startPos;
+        eaten.endPos = run.interface.pos();
+      };
+      return eaten;
+    };
+    
+    if (data.type === "unit"){
+      var entries = this.list[run.next];
+      if (!entries){
+        barf();
+        return;
+      };
+      var entry = entries[data.name];
+      if (entry){
+        if (entry.valid){
+          run.next = entry.next;
+          return entry.content;
+        };
+        barf();
+        return;
+      };
+
+      var unit = this.unitData[data.name];
+      if (!unit){
+        barf();
+        throw parseException("missing unit", data);
+      };
+      if (unit.elemental){
+        // never applies to elemental stuff
+        // elemental stuff should be coverd above
+        barf();
+        return;
+      };
+
+      // nothing cached yet
+      entry = {
+      };
+      entry.content = run.interface.eat(unit);
+      if (entry.content){
+        entry.valid = true;
+      }else{
+        entry.valid = false;
+        barf();
+      };
+      entries[data.name] = entry;
+      if (typeof entry.content === "object"){
+        if (!entry.content.units){
+          entry.content.units = {};
+        };
+        if (entry.content.unit && !entry.content.units[entry.content.unit]){
+          entry.content.units[entry.content.unit] = entry.content;
+        };
+        entry.content.units[data.name] = entry.content;
+        entry.content.unit = data.name;
+        if (typeof entry.content.bp !== 'number'){
+          entry.content.bp = this.maxBp || 1000000;
+        };
+        entry.content.startPos = startPos;
+        entry.content.endPos = run.interface.pos();
+      };
+      return entry.content;
+    };
+    
+    throw parseException("unknown type", data);
+  },
+  
+  addConcept(name, concept){
+    if (!concept || typeof concept.test !== "function"){
+      throw parseException("missing test function in concept", concept);
+    };
+    addSomething(this, "concept", name, concept);
+  },
+  addUnit(name, param){
+    addSomething(this, "unit", name, param);
+  },
+  addTree(name, param){
+    if (param){
+      if (param.length && !param.nodes){
+        // called addTree with a simple array
+        param = {
+          nodes: param
+        };
+      };
+    };
+    addSomething(this, "tree", name, param);
+  },
+  extend(other){
+    if (!other){
+      throw parseException("called extend without other", other);
+    };
+    extendSomething(this, other, "unit");
+    extendSomething(this, other, "concept");
+    extendSomething(this, other, "tree");
+    return this;
+  }
+};
+
+return Parser;

@@ -1,0 +1,31 @@
+{
+  "name": "tatoo-palace",
+  "version": "0.0.1",
+  "description": "token and tree oriented open Parser and Language artistic creation Enging",
+  "main": "./template.js",
+  "peerDependencies": {
+    "promiseland": ">= 0.0.24"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/soliton4/tatoo-palace"
+  },
+  "keywords": [
+    "parser",
+    "token",
+    "tree",
+    "language"
+  ],
+  "author": {
+    "name": "Matthias Behrens",
+    "email": "matthias.behrens@gmail.com"
+  },
+  "license": "LGPLv3",
+  "engine": {
+    "node": ">=1.0"
+  },
+  "bugs": {
+    "url": "http://github.com/soliton4/tatoo-palace/issues"
+  },
+  "homepage": "http://promiseland.technology"
+}
